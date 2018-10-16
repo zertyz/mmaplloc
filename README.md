@@ -1,5 +1,4 @@
 # mmaplloc (C)
-==============
 
 malloc &amp; free &amp; realloc &amp; associated functions allowing backing overlay to filesystem mmapped files (in C, which are way, way faster than swapping) PLUS associated tools to help building numerous stores for C++ data structure containers.
 If more than one backing overlay files are specifyed, the library do its best to split it in several mmap allocations on contiguous regions (lets say, by 1MiB each), designed to allow different filesystems (and devices) to be used on a pseudo-parallel scheme, for performance improvements. There is a Spike program designed to infer the best block size for each device.
