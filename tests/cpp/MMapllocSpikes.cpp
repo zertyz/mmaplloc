@@ -57,26 +57,26 @@ struct RealTimeLogger {
      */
     template <typename _RecordType>
     static void remapLogFile(const int          fileDescriptor, 
-                             _RecordType      *&mapStartPtr,
-                             _RecordType      *&readPtr,
-                             _RecordType      *&writePtr,
-                             _RecordType      *&mapEndPtr,
-                             unsigned long     &oldMapLength,
-                             unsigned long     &fileLength,
-                             unsigned long      toAppendLength) {
+                             _RecordType        *&mapStartPtr,
+                             _RecordType        *&readPtr,
+                             _RecordType        *&writePtr,
+                             _RecordType        *&mapEndPtr,
+                             unsigned long long  &oldMapLength,
+                             unsigned long long  &fileLength,
+                             unsigned long long   toAppendLength) {
 
         // unmap the section of the file already written to and read from, but leave the portion not read yet
-        unsigned long readMapUnmapLength = (unsigned long)readPtr - (unsigned long)mapStartPtr;
-        unsigned long pageAlignedReadMapUnmapLength = (readMapUnmapLength / 4096) * 4096;
-        unsigned long mapPtrDelta = readMapUnmapLength - pageAlignedReadMapUnmapLength;    // difference (due to page alignment) between map start and first unread object -- otherwise they would be equal
+        unsigned long long readMapUnmapLength = (unsigned long long)readPtr - (unsigned long long)mapStartPtr;
+        unsigned long long pageAlignedReadMapUnmapLength = (readMapUnmapLength / 4096) * 4096;
+        unsigned long long mapPtrDelta = readMapUnmapLength - pageAlignedReadMapUnmapLength;    // difference (due to page alignment) between map start and first unread object -- otherwise they would be equal
         if (pageAlignedReadMapUnmapLength > 0) {
             if (munmap(mapStartPtr, pageAlignedReadMapUnmapLength) != 0) {
                 throw std::runtime_error("Could not unmmap old map. Error: "+ string(strerror(errno)));
             }
             mapStartPtr = (_RecordType *) (((char *)mapStartPtr) + pageAlignedReadMapUnmapLength);
         }
-        unsigned long toReadLength = oldMapLength-readMapUnmapLength;
-        unsigned long newMapLength = toReadLength + toAppendLength + mapPtrDelta;
+        unsigned long long toReadLength = oldMapLength-readMapUnmapLength;
+        unsigned long long newMapLength = toReadLength + toAppendLength + mapPtrDelta;
 
         // prepare the file for new section, unifying to read addresses & new section (with a possible relocation)
         ftruncate(fileDescriptor, fileLength + toAppendLength);
@@ -84,7 +84,7 @@ struct RealTimeLogger {
         mapStartPtr  = (_RecordType *) mremap(mapStartPtr, toReadLength, newMapLength, MREMAP_MAYMOVE);
         if (mapStartPtr == MAP_FAILED) {
             cerr << "\tfileDescriptor = " + to_string(fileDescriptor) << endl;
-            cerr << "\tmapStartPtr    = " + to_string((unsigned long)mapStartPtr) << endl;
+            cerr << "\tmapStartPtr    = " + to_string((unsigned long long)mapStartPtr) << endl;
             cerr << "\ttoReadLength   = " + to_string(toReadLength) << endl;
             cerr << "\tnewMapLength   = " + to_string(newMapLength) << endl;
             cerr << "\toffset         = " + to_string(fileLength-toReadLength) << endl;
@@ -171,11 +171,11 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
     unsigned logAreaLength = targetBuckets;
     output(" OK -- at address "+to_string((unsigned long)logArea)+"\n");
 
-    LogBucket     *readPtr      = logArea;
-    LogBucket     *writePtr     = logArea;
-    LogBucket     *mapEndPtr    = &logArea[logAreaLength];
-    unsigned long  oldMapLength = targetBytes;
-    unsigned long  fileLength   = targetBytes;
+    LogBucket          *readPtr      = logArea;
+    LogBucket          *writePtr     = logArea;
+    LogBucket          *mapEndPtr    = &logArea[logAreaLength];
+    unsigned long long  oldMapLength = targetBytes;
+    unsigned long long  fileLength   = targetBytes;
 
     unsigned long  writeCount = 0;
     unsigned long  readCount  = 0;
