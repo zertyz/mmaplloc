@@ -42,11 +42,13 @@ struct RealTimeLogger {
             throw std::runtime_error("Could not open sparse file '" + string(fileName) + "' with " + to_string(sizeBytes) + " bytes");
         }
         ftruncate(fileDescriptor, sizeBytes);
-        _RecordType *mmapPtr = (_RecordType *) mmap(0, sizeBytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NONBLOCK | MAP_NORESERVE, fileDescriptor, 0);
+        _RecordType *mmapPtr = (_RecordType *) mmap(0, sizeBytes, PROT_READ | PROT_WRITE, MAP_SHARED | /*MAP_NONBLOCK | MAP_NORESERVE | */MAP_POPULATE, fileDescriptor, 0);
         //close(fileDes);
         if (mmapPtr == MAP_FAILED) {
             throw std::runtime_error("Could not mmap file '" + string(fileName));
         }
+//        madvise(mmapPtr, sizeBytes, MADV_SEQUENTIAL);
+//        madvise(mmapPtr, sizeBytes, MADV_RANDOM);
         return mmapPtr;
         // int munmap(void *addr, size_t len);
     }
@@ -91,6 +93,8 @@ struct RealTimeLogger {
             string fileName = "<name not available>";
             throw std::runtime_error("Could not mmap new section of file '" + string(fileName) + "'. Error: "+ string(strerror(errno)));
         }
+//        madvise(mapStartPtr, newMapLength, MADV_SEQUENTIAL);
+//        madvise(mapStartPtr, newMapLength, MADV_RANDOM);
 
         readPtr     = (_RecordType *) (((char *)mapStartPtr) + mapPtrDelta);
         writePtr    = (_RecordType *) (((char *)readPtr)     + toReadLength);
@@ -154,7 +158,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
 
     // Determine the log file max size
     // 'targetBytes' will give multiples of 'sizeof(LogBucket)' up to 'targetMiB'
-    constexpr unsigned long targetMiB     = 64;
+    constexpr unsigned long targetMiB     = 256;
     constexpr unsigned long targetBuckets = (targetMiB*1024*1024) / sizeof(LogBucket);
     constexpr unsigned long targetBytes   = targetBuckets * sizeof(LogBucket);
 
@@ -193,7 +197,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
     unsigned long long globalMaxDelta = 0;
 
     LogBucket *oldReadPtr = readPtr;
-    for (unsigned growthId=8; growthId>=1; growthId--) {
+    for (unsigned growthId=7; growthId>=1; growthId--) {
 
         unsigned long long maxDelta     = 0;
 
@@ -241,7 +245,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
 
     output("\nFinal worst: "+to_string(globalMaxDelta)+"ns\n");
     output("Counts: write("+to_string(writeCount)+"); read("+to_string(readCount)+")\n");
-    output("Average time: "+to_string(((double)elapsedTimestampNS)/((double)writeCount)));
+    output("Average time: "+to_string(((double)elapsedTimestampNS)/((double)writeCount))+"ns\n");
 
     // 1) create a file with enough size -- how?
     // 2) mmap the whole stuff
