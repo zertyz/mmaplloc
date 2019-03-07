@@ -261,3 +261,31 @@ boost::unit_test::test_suite* init_unit_test_suite(int argc, char* args[]) {
 	boost::unit_test::framework::master_test_suite().p_name.value = "MMapllocSpikes";
 	return 0;
 }
+
+/**
+ 
+ QUEUE Considerations
+ A | B | C | D | E | F | G | H |
+
+reservedHead=A
+head=B
+
+reservedTail=H
+tail=H
+
+2 produtores simultaneos:
+1: reservedTail=I
+2: reservedTail=J
+ e dados ainda estão sendo preenchidos
+
+Consumidor leva todos os elementos:
+ 7 em paralelo, levam head=H mas reservedHead=A ainda, pois os consumidores antigos ainda não liberaram eles
+
+produtor terminou com J:
+ tail não pode avançar pra J sem passar antes por I
+ possibilidades:
+  1) Cada elemento da fila tem um boolean pra indicar se já terminou a reserva -- esse boolean pode ser um timestamp
+[luiz@pinklap ~]$ 
+
+
+ * */
