@@ -154,7 +154,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
 
     // Determine the log file max size
     // 'targetBytes' will give multiples of 'sizeof(LogBucket)' up to 'targetMiB'
-    constexpr unsigned long targetMiB     = 256;
+    constexpr unsigned long targetMiB     = 64;
     constexpr unsigned long targetBuckets = (targetMiB*1024*1024) / sizeof(LogBucket);
     constexpr unsigned long targetBytes   = targetBuckets * sizeof(LogBucket);
 
@@ -183,7 +183,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
     unsigned long long startTimestampNS = TimeMeasurements::getMonotonicRealTimeNS();
 
     // write some entries without a simultaneous read
-    for (unsigned i=0; i<10; i++) {
+    for (unsigned i=0; i<39; i++) {
         writePtr->id        = writeCount++;
         writePtr->timestamp = TimeMeasurements::getMonotonicRealTimeNS();
         writePtr++;
