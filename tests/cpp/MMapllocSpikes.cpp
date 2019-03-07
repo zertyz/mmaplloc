@@ -180,6 +180,8 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
     unsigned long  writeCount = 0;
     unsigned long  readCount  = 0;
 
+    unsigned long long startTimestampNS = TimeMeasurements::getMonotonicRealTimeNS();
+
     // write some entries without a simultaneous read
     for (unsigned i=0; i<10; i++) {
         writePtr->id        = writeCount++;
@@ -233,8 +235,13 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
         oldReadPtr++;
         readPtr++;
     }
+
+    unsigned long long elapsedTimestampNS = TimeMeasurements::getMonotonicRealTimeNS() - startTimestampNS;
+
+
     output("\nFinal worst: "+to_string(globalMaxDelta)+"ns\n");
     output("Counts: write("+to_string(writeCount)+"); read("+to_string(readCount)+")\n");
+    output("Average time: "+to_string(((double)elapsedTimestampNS)/((double)writeCount)));
 
     // 1) create a file with enough size -- how?
     // 2) mmap the whole stuff
