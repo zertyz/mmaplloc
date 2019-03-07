@@ -21,6 +21,7 @@ using namespace mutua::cpputils;
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <errno.h>
 struct RealTimeLogger {
 
     static void createSparseFile(long sizeBytes, char *fileName, int mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) {
@@ -55,46 +56,49 @@ struct RealTimeLogger {
      *  A new 'ftruncate()' will be used to grow the file and the new mapping will have 'length' bytes
      */
     template <typename _RecordType>
-    static _RecordType *remapLogFile(const int          fileDescriptor, 
-                                     _RecordType      *&unmapStart,
-                                     long              &unmapLength,
-                                     _RecordType       *oldMapStart,
-                                     _RecordType       *keepPtr,
-                                     long              &oldMapLength,
-                                     long              &fileLength,
-                                     const long         toAppendLength) {
+    static void remapLogFile(const int          fileDescriptor, 
+                             _RecordType      *&mapStartPtr,
+                             _RecordType      *&readPtr,
+                             _RecordType      *&writePtr,
+                             _RecordType      *&mapEndPtr,
+                             unsigned long     &oldMapLength,
+                             unsigned long     &fileLength,
+                             unsigned long      toAppendLength) {
 
-        // unmap the section of the file no longer used
-        if (unmapLength > 0) {
-            munmap(unmapStart, unmapLength);
+        // unmap the section of the file already written to and read from, but leave the portion not read yet
+        unsigned long readMapUnmapLength = (unsigned long)readPtr - (unsigned long)mapStartPtr;
+        unsigned long pageAlignedReadMapUnmapLength = (readMapUnmapLength / 4096) * 4096;
+        unsigned long mapPtrDelta = readMapUnmapLength - pageAlignedReadMapUnmapLength;    // difference (due to page alignment) between map start and first unread object -- otherwise they would be equal
+        if (pageAlignedReadMapUnmapLength > 0) {
+            if (munmap(mapStartPtr, pageAlignedReadMapUnmapLength) != 0) {
+                throw std::runtime_error("Could not unmmap old map. Error: "+ string(strerror(errno)));
+            }
+            mapStartPtr = (_RecordType *) (((char *)mapStartPtr) + pageAlignedReadMapUnmapLength);
         }
+        unsigned long toReadLength = oldMapLength-readMapUnmapLength;
+        unsigned long newMapLength = toReadLength + toAppendLength + mapPtrDelta;
 
-        // unmap the section of the file already written to, but not read yet
-        long notReadUnmapLength = (long)keepPtr - (long)oldMapStart;
-        if (notReadUnmapLength > 0) {
-            munmap(oldMapStart, notReadUnmapLength);
-        }
-
-        // prepare the new section
+        // prepare the file for new section, unifying to read addresses & new section (with a possible relocation)
         ftruncate(fileDescriptor, fileLength + toAppendLength);
-        _RecordType *mmapPtr = (_RecordType *) mmap(0, toAppendLength, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NONBLOCK | MAP_NORESERVE, fileDescriptor, fileLength);
-        if (mmapPtr == MAP_FAILED) {
+        //mapStartPtr = (_RecordType *) mmap(0, newMapLength, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NONBLOCK | MAP_NORESERVE, fileDescriptor, fileLength-toReadLength);
+        mapStartPtr  = (_RecordType *) mremap(mapStartPtr, toReadLength, newMapLength, MREMAP_MAYMOVE);
+        if (mapStartPtr == MAP_FAILED) {
+            cerr << "\tfileDescriptor = " + to_string(fileDescriptor) << endl;
+            cerr << "\tmapStartPtr    = " + to_string((unsigned long)mapStartPtr) << endl;
+            cerr << "\ttoReadLength   = " + to_string(toReadLength) << endl;
+            cerr << "\tnewMapLength   = " + to_string(newMapLength) << endl;
+            cerr << "\toffset         = " + to_string(fileLength-toReadLength) << endl;
             string fileName = "<name not available>";
-            throw std::runtime_error("Could not mmap new section of file '" + string(fileName));
+            throw std::runtime_error("Could not mmap new section of file '" + string(fileName) + "'. Error: "+ string(strerror(errno)));
         }
+
+        readPtr     = (_RecordType *) (((char *)mapStartPtr) + mapPtrDelta);
+        writePtr    = (_RecordType *) (((char *)readPtr)     + toReadLength);
+        mapEndPtr   = (_RecordType *) (((char *)mapStartPtr) + newMapLength);
 
         // returns
-        //////////
-
-        // set old maps to unmap on next call
-        unmapStart  = keepPtr;
-        unmapLength = oldMapLength-notReadUnmapLength;
-
-        // set write maps to read maps on next call
-        oldMapLength = toAppendLength;
-
-        fileLength += toAppendLength;
-        return mmapPtr;
+        oldMapLength = newMapLength;
+        fileLength  += toAppendLength;
     }
 
 };
@@ -163,41 +167,74 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
     output("MMapping the sparse log file...");
     int fileDescriptor;
     LogBucket *logArea = RealTimeLogger::mmapSparseFile<LogBucket>(fileDescriptor, targetBytes, logFile);
+    unsigned toWriteIndex  = 0;
     unsigned logAreaLength = targetBuckets;
     output(" OK -- at address "+to_string((unsigned long)logArea)+"\n");
 
-    LogBucket *unmapStart  = nullptr;
-    long       unmapLength = 0;
-    long      oldMapLength = 0;
-    long       fileLength  = targetBytes;
+    LogBucket     *readPtr      = logArea;
+    LogBucket     *writePtr     = logArea;
+    LogBucket     *mapEndPtr    = &logArea[logAreaLength];
+    unsigned long  oldMapLength = targetBytes;
+    unsigned long  fileLength   = targetBytes;
 
-    for (unsigned growthId=0; growthId<1024; growthId++) {
-//        output("Writing (possibly out of order) objects: ");
-        for (unsigned i=0; i<logAreaLength; i++) {
-//        cerr << "writing #" << i << flush;
-            logArea[i].id = i;
-            logArea[i].timestamp = TimeMeasurements::getMonotonicRealTimeNS();
-//        cerr << "." << endl << flush;
-        }
-//        output("DONE\n");
+    unsigned long  writeCount = 0;
+    unsigned long  readCount  = 0;
 
-        LogBucket *toReadLogArea = logArea;
-        logArea = RealTimeLogger::remapLogFile<LogBucket>(fileDescriptor, unmapStart, unmapLength, toReadLogArea, toReadLogArea, oldMapLength, fileLength, targetBytes);
-
-//        output("Computing elapsed time of written log entries: ");
-        unsigned long long currentDelta = 0;
-        unsigned long long maxDelta     = 0;
-        for (unsigned i=1; i<logAreaLength; i++) {
-            currentDelta = toReadLogArea[i].timestamp - toReadLogArea[i-1].timestamp;
-            if (currentDelta > maxDelta) {
-                maxDelta = currentDelta;
-//                output(".");
-            }
-        }
-//        output("DONE -- maxDelta: "+to_string(maxDelta)+"ns\n");
-        output(to_string(maxDelta)+"ns\t");
+    // write some entries without a simultaneous read
+    for (unsigned i=0; i<10; i++) {
+        writePtr->id        = writeCount++;
+        writePtr->timestamp = TimeMeasurements::getMonotonicRealTimeNS();
+        writePtr++;
     }
 
+    unsigned long long currentDelta   = 0;
+    unsigned long long globalMaxDelta = 0;
+
+    LogBucket *oldReadPtr = readPtr;
+    for (unsigned growthId=1024; growthId>=1; growthId--) {
+
+        unsigned long long maxDelta     = 0;
+
+        while (writePtr != mapEndPtr) {
+            // write
+            writePtr->id        = writeCount++;
+            writePtr->timestamp = TimeMeasurements::getMonotonicRealTimeNS();
+            writePtr++;
+            // read
+            readPtr++;
+            currentDelta = readPtr->timestamp - oldReadPtr->timestamp;
+            if (currentDelta > maxDelta) {
+                maxDelta = currentDelta;
+                if (maxDelta > globalMaxDelta) {
+                    globalMaxDelta = maxDelta;
+                }
+            }
+            readCount++;
+            oldReadPtr++;
+        }
+
+        output(to_string(maxDelta)+"ns\t");
+
+        if (growthId > 1) {
+            RealTimeLogger::remapLogFile<LogBucket>(fileDescriptor, logArea, readPtr, writePtr, mapEndPtr, oldMapLength, fileLength, targetBytes);
+            oldReadPtr = readPtr;
+        }
+    }
+
+    // read remaining entries
+    readPtr++;
+    while (readPtr != mapEndPtr) {
+        // read
+        currentDelta = readPtr->timestamp - oldReadPtr->timestamp;
+        if (currentDelta > globalMaxDelta) {
+            globalMaxDelta = currentDelta;
+        }
+        readCount++;
+        oldReadPtr++;
+        readPtr++;
+    }
+    output("\nFinal worst: "+to_string(globalMaxDelta)+"ns\n");
+    output("Counts: write("+to_string(writeCount)+"); read("+to_string(readCount)+")\n");
 
     // 1) create a file with enough size -- how?
     // 2) mmap the whole stuff
