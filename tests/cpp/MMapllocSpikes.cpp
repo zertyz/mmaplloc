@@ -154,7 +154,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
 
     // Determine the log file max size
     // 'targetBytes' will give multiples of 'sizeof(LogBucket)' up to 'targetMiB'
-    constexpr unsigned long targetMiB     = 8;
+    constexpr unsigned long targetMiB     = 256;
     constexpr unsigned long targetBuckets = (targetMiB*1024*1024) / sizeof(LogBucket);
     constexpr unsigned long targetBytes   = targetBuckets * sizeof(LogBucket);
 
@@ -193,7 +193,7 @@ BOOST_AUTO_TEST_CASE(mmapLoggingTest) {
     unsigned long long globalMaxDelta = 0;
 
     LogBucket *oldReadPtr = readPtr;
-    for (unsigned growthId=1024; growthId>=1; growthId--) {
+    for (unsigned growthId=8; growthId>=1; growthId--) {
 
         unsigned long long maxDelta     = 0;
 
